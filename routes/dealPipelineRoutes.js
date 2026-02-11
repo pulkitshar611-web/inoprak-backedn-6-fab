@@ -12,5 +12,6 @@ router.get('/:pipeline_id/stages', verifyToken, dealPipelineController.getStages
 router.post('/:pipeline_id/stages', verifyToken, dealPipelineController.createStage);
 router.put('/:pipeline_id/stages/:stage_id', verifyToken, dealPipelineController.updateStage);
 router.delete('/:pipeline_id/stages/:stage_id', verifyToken, dealPipelineController.deleteStage);
+router.patch('/:pipeline_id/stages/reorder', verifyToken, dealPipelineController.reorderStages);
 
 module.exports = router;

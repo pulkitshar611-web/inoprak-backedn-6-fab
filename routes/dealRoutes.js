@@ -28,6 +28,7 @@ router.post('/', requirePermission(permissionModule), dealController.create);
 // router.post('/:id/send-email', requirePermission(permissionModule), dealController.sendEmail);
 router.put('/:id', requirePermission(permissionModule), dealController.update);
 router.put('/:id/status', requirePermission(permissionModule), dealController.updateStatus);
+router.patch('/:id/stage', requirePermission(permissionModule), dealController.updateStage);
 router.delete('/:id', requirePermission(permissionModule), dealController.delete);
 
 module.exports = router;

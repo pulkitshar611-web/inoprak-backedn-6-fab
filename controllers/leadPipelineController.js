@@ -132,12 +132,37 @@ const updateStage = async (req, res) => {
 const deleteStage = async (req, res) => {
   try {
     const { pipeline_id, stage_id } = req.params;
-    const [result] = await pool.execute('UPDATE lead_pipeline_stages SET is_deleted = 1 WHERE id = ? AND pipeline_id = ?', [stage_id, pipeline_id]);
+    const [result] = await pool.execute(
+      'UPDATE lead_pipeline_stages SET is_deleted = 1 WHERE id = ? AND pipeline_id = ?',
+      [stage_id, pipeline_id]
+    );
     if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Stage not found' });
     res.json({ success: true, data: { id: stage_id, deleted: true } });
   } catch (err) {
     console.error('Lead stage delete:', err);
     res.status(500).json({ success: false, error: 'Failed to delete stage' });
+  }
+};
+
+const reorderStages = async (req, res) => {
+  try {
+    const { pipeline_id } = req.params;
+    const { stages } = req.body; // Array of { id, display_order }
+
+    if (!Array.isArray(stages)) {
+      return res.status(400).json({ success: false, error: 'stages array is required' });
+    }
+
+    const queries = stages.map(s =>
+      pool.execute('UPDATE lead_pipeline_stages SET display_order = ? WHERE id = ? AND pipeline_id = ?', [s.display_order, s.id, pipeline_id])
+    );
+
+    await Promise.all(queries);
+
+    res.json({ success: true, message: 'Stages reordered successfully' });
+  } catch (err) {
+    console.error('Lead stage reorder:', err);
+    res.status(500).json({ success: false, error: 'Failed to reorder stages' });
   }
 };
 
@@ -150,4 +175,5 @@ module.exports = {
   createStage,
   updateStage,
   deleteStage,
+  reorderStages
 };

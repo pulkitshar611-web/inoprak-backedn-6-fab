@@ -166,10 +166,18 @@ const getAll = async (req, res) => {
 
     // Get all leads without pagination
     const [leads] = await pool.execute(
-      `SELECT l.*, u.name as owner_name, u.email as owner_email, c.name as company_name
+      `SELECT l.*, 
+              u.name as owner_name, 
+              u.email as owner_email, 
+              c.name as company_name,
+              ls.name as stage_name,
+              ls.color as stage_color,
+              lp.name as pipeline_name
        FROM leads l
        LEFT JOIN users u ON l.owner_id = u.id
        LEFT JOIN companies c ON l.company_id = c.id
+       LEFT JOIN lead_pipeline_stages ls ON l.stage_id = ls.id
+       LEFT JOIN lead_pipelines lp ON l.pipeline_id = lp.id
        ${whereClause}
        ORDER BY l.created_at DESC`,
       params
@@ -230,10 +238,18 @@ const getById = async (req, res) => {
       });
     }
     const [leads] = await pool.execute(
-      `SELECT l.*, u.name as owner_name, u.email as owner_email, c.name as company_name
+      `SELECT l.*, 
+              u.name as owner_name, 
+              u.email as owner_email, 
+              c.name as company_name,
+              ls.name as stage_name,
+              ls.color as stage_color,
+              lp.name as pipeline_name
        FROM leads l
        LEFT JOIN users u ON l.owner_id = u.id
        LEFT JOIN companies c ON l.company_id = c.id
+       LEFT JOIN lead_pipeline_stages ls ON l.stage_id = ls.id
+       LEFT JOIN lead_pipelines lp ON l.pipeline_id = lp.id
        WHERE l.id = ? AND l.company_id = ? AND l.is_deleted = 0`,
       [id, companyId]
     );
@@ -1860,21 +1876,66 @@ const importLeads = async (req, res) => {
   }
 };
 
+const updateStage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stage_id, pipeline_id } = req.body;
+
+    if (!stage_id) {
+      return res.status(400).json({ success: false, error: 'stage_id is required' });
+    }
+
+    const updates = ['stage_id = ?'];
+    const values = [stage_id];
+
+    if (pipeline_id) {
+      updates.push('pipeline_id = ?');
+      values.push(pipeline_id);
+    }
+
+    // Also update legacy status field if needed
+    // Fetch stage name
+    const [stages] = await pool.execute('SELECT name FROM lead_pipeline_stages WHERE id = ?', [stage_id]);
+    if (stages.length > 0) {
+      updates.push('status = ?');
+      values.push(stages[0].name);
+    }
+
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(id);
+
+    const [result] = await pool.execute(
+      `UPDATE leads SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, error: 'Lead not found' });
+    }
+
+    res.json({ success: true, message: 'Lead stage updated successfully' });
+  } catch (error) {
+    console.error('Update lead stage error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 module.exports = {
   getAll,
   getById,
   create,
   update,
-  delete: deleteLead,
+  deleteLead,
   convertToClient,
   getOverview,
   updateStatus,
+  updateLeadLabels,
+  updateStage,
   bulkAction,
   getAllContacts,
   getAllLabels,
   createLabel,
   deleteLabel,
-  updateLeadLabels,
   getContactById,
   createContact,
   updateContact,

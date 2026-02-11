@@ -112,12 +112,21 @@ const getAll = async (req, res) => {
         }
 
         const [deals] = await pool.execute(
-            `SELECT e.*, c.company_name as client_name, p.project_name, comp.name as company_name, u.name as created_by_name
+            `SELECT e.*, 
+                    c.company_name as client_name, 
+                    p.project_name, 
+                    comp.name as company_name, 
+                    u.name as created_by_name,
+                    ds.name as stage_name,
+                    ds.color as stage_color,
+                    dp.name as pipeline_name
        FROM deals e
        LEFT JOIN clients c ON e.client_id = c.id
        LEFT JOIN projects p ON e.project_id = p.id
        LEFT JOIN companies comp ON e.company_id = comp.id
        LEFT JOIN users u ON e.created_by = u.id
+       LEFT JOIN deal_pipeline_stages ds ON e.stage_id = ds.id
+       LEFT JOIN deal_pipelines dp ON e.pipeline_id = dp.id
        ${whereClause}
        ORDER BY e.created_at DESC`,
             params
@@ -138,12 +147,21 @@ const getAll = async (req, res) => {
 const getById = async (req, res) => {
     try {
         const [deals] = await pool.execute(
-            `SELECT e.*, c.company_name as client_name, p.project_name, comp.name as company_name, u.name as created_by_name
+            `SELECT e.*, 
+                    c.company_name as client_name, 
+                    p.project_name, 
+                    comp.name as company_name, 
+                    u.name as created_by_name,
+                    ds.name as stage_name,
+                    ds.color as stage_color,
+                    dp.name as pipeline_name
        FROM deals e
        LEFT JOIN clients c ON e.client_id = c.id
        LEFT JOIN projects p ON e.project_id = p.id
        LEFT JOIN companies comp ON e.company_id = comp.id
        LEFT JOIN users u ON e.created_by = u.id
+       LEFT JOIN deal_pipeline_stages ds ON e.stage_id = ds.id
+       LEFT JOIN deal_pipelines dp ON e.pipeline_id = dp.id
        WHERE e.id = ? AND e.is_deleted = 0`,
             [req.params.id]
         );
@@ -296,15 +314,16 @@ const create = async (req, res) => {
             `INSERT INTO deals (
         company_id, deal_number, deal_date, valid_till, currency, client_id, project_id, lead_id, title,
         calculate_tax, description, note, terms, tax, second_tax, discount, discount_type,
-        sub_total, discount_amount, tax_amount, total, created_by, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sub_total, discount_amount, tax_amount, total, created_by, status, pipeline_id, stage_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 companyId, deal_number, deal_date ?? null, valid_till ?? null, currency || 'USD',
                 client_id ?? null, project_id ?? null, lead_id ?? null, title ?? null,
                 calculate_tax || 'After Discount', description ?? null, note ?? null, terms || 'Thank you for your business.',
                 tax ?? null, second_tax ?? null, discount ?? 0, discount_type || '%',
                 totals.sub_total, totals.discount_amount, totals.tax_amount, totals.total,
-                createdBy, normalizeDealStatus(status)
+                createdBy, normalizeDealStatus(status),
+                req.body.pipeline_id ?? null, req.body.stage_id ?? null
             ]
         );
 
@@ -418,6 +437,42 @@ const updateStatus = async (req, res) => {
     return update(req, res);
 }
 
+const updateStage = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { stage_id, pipeline_id } = req.body;
+
+        if (!stage_id) {
+            return res.status(400).json({ success: false, error: 'stage_id is required' });
+        }
+
+        const updates = ['stage_id = ?'];
+        const values = [stage_id];
+
+        if (pipeline_id) {
+            updates.push('pipeline_id = ?');
+            values.push(pipeline_id);
+        }
+
+        updates.push('updated_at = CURRENT_TIMESTAMP');
+        values.push(id);
+
+        const [result] = await pool.execute(
+            `UPDATE deals SET ${updates.join(', ')} WHERE id = ?`,
+            values
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ success: false, error: 'Deal not found' });
+        }
+
+        res.json({ success: true, message: 'Deal stage updated successfully' });
+    } catch (error) {
+        console.error('Update deal stage error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+}
+
 /**
  * Get deal activities
  * GET /api/v1/deals/:id/activities
@@ -509,6 +564,7 @@ module.exports = {
     delete: deleteDeal,
     getFilters,
     updateStatus,
+    updateStage,
     getDealContacts,
     addContactToDeal,
     removeContactFromDeal,

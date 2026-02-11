@@ -164,6 +164,19 @@ const getAll = async (req, res) => {
     let whereClause = 'WHERE t.company_id = ? AND t.is_deleted = 0';
     const params = [filterCompanyId];
 
+    // Role-based visibility
+    // If not Admin/Super Admin, restrict to tasks assigned to or created by the user
+    const userRole = req.user?.role;
+    const userId = req.user?.id;
+
+    if (userId && userRole !== 'Super Admin' && userRole !== 'Admin' && userRole !== 'admin') {
+      whereClause += ` AND (
+        t.created_by = ? 
+        OR t.id IN (SELECT task_id FROM task_assignees WHERE user_id = ?)
+      )`;
+      params.push(userId, userId);
+    }
+
     // Project Tasks view: only tasks that belong to a project (project_id IS NOT NULL)
     if (project_only === 'true' || project_only === '1') {
       whereClause += ' AND t.project_id IS NOT NULL';
@@ -176,12 +189,12 @@ const getAll = async (req, res) => {
       whereClause += ' AND t.status = ?';
       params.push(status);
     }
-    
+
     // Handle project_id and client_id with OR logic when both are provided
     // This allows fetching tasks that match either client or project (useful for invoice/estimate detail pages)
     const hasClientId = req.query.client_id;
     const hasProjectId = project_id;
-    
+
     if (hasClientId && hasProjectId) {
       // If both are provided, use OR logic to get tasks matching either
       whereClause += ' AND (t.client_id = ? OR t.project_id = ?)';
@@ -197,10 +210,22 @@ const getAll = async (req, res) => {
         params.push(req.query.client_id);
       }
     }
-    
+
     if (req.query.lead_id) {
       whereClause += ' AND t.lead_id = ?';
       params.push(req.query.lead_id);
+    }
+    if (req.query.deal_id) {
+      whereClause += ' AND t.deal_id = ?';
+      params.push(req.query.deal_id);
+    }
+    if (req.query.contact_id) {
+      whereClause += ' AND t.contact_id = ?';
+      params.push(req.query.contact_id);
+    }
+    if (req.query.related_company_id) {
+      whereClause += ' AND t.related_company_id = ?';
+      params.push(req.query.related_company_id);
     }
     if (assigned_to) {
       whereClause += ` AND t.id IN (
@@ -228,10 +253,22 @@ const getAll = async (req, res) => {
 
     // Get all tasks without pagination
     const [tasks] = await pool.execute(
-      `SELECT t.*, p.project_name, p.short_code as project_code, u.name as created_by_name
+      `SELECT t.*, 
+              p.project_name, p.short_code as project_code, 
+              u.name as created_by_name,
+              l.person_name as lead_name,
+              d.title as deal_name,
+              c.company_name as client_name,
+              cnt.name as contact_name,
+              cmp.name as related_company_name
        FROM tasks t
        LEFT JOIN projects p ON t.project_id = p.id
        LEFT JOIN users u ON t.created_by = u.id
+       LEFT JOIN leads l ON t.lead_id = l.id
+       LEFT JOIN deals d ON t.deal_id = d.id
+       LEFT JOIN clients c ON t.client_id = c.id
+       LEFT JOIN client_contacts cnt ON t.contact_id = cnt.id
+       LEFT JOIN companies cmp ON t.related_company_id = cmp.id
        ${whereClause}
        ORDER BY t.created_at DESC`,
       params
@@ -276,9 +313,20 @@ const getById = async (req, res) => {
     const { id } = req.params;
 
     const [tasks] = await pool.execute(
-      `SELECT t.*, p.project_name, p.short_code as project_code
+      `SELECT t.*, 
+              p.project_name, p.short_code as project_code,
+              l.person_name as lead_name,
+              d.title as deal_name,
+              c.company_name as client_name,
+              cnt.name as contact_name,
+              cmp.name as related_company_name
        FROM tasks t
        LEFT JOIN projects p ON t.project_id = p.id
+       LEFT JOIN leads l ON t.lead_id = l.id
+       LEFT JOIN deals d ON t.deal_id = d.id
+       LEFT JOIN clients c ON t.client_id = c.id
+       LEFT JOIN client_contacts cnt ON t.contact_id = cnt.id
+       LEFT JOIN companies cmp ON t.related_company_id = cmp.id
        WHERE t.id = ? AND t.is_deleted = 0`,
       [id]
     );
@@ -411,6 +459,9 @@ const create = async (req, res) => {
     let safeProjectId = project_id ?? null;
     let safeClientId = client_id ?? null;
     let safeLeadId = lead_id ?? null;
+    let safeDealId = req.body.deal_id ?? null; // Can be passed directly
+    let safeContactId = req.body.contact_id ?? null; // Can be passed directly
+    let safeRelatedCompanyId = req.body.related_company_id ?? null; // Can be passed directly
 
     if (related_to_type) {
       if (related_to_type === 'project' && req.body.related_to) {
@@ -419,6 +470,12 @@ const create = async (req, res) => {
         safeClientId = req.body.related_to;
       } else if (related_to_type === 'lead' && req.body.related_to) {
         safeLeadId = req.body.related_to;
+      } else if (related_to_type === 'deal' && req.body.related_to) {
+        safeDealId = req.body.related_to;
+      } else if (related_to_type === 'contact' && req.body.related_to) {
+        safeContactId = req.body.related_to;
+      } else if (related_to_type === 'company' && req.body.related_to) {
+        safeRelatedCompanyId = req.body.related_to;
       }
     }
 
@@ -451,7 +508,7 @@ const create = async (req, res) => {
     const safeStatus = statusMap[status] || 'Incomplete';
     const safeIsRecurring = is_recurring ? 1 : 0;
     const safeRecurringFrequency = recurring_frequency ?? null;
-    
+
     // Handle new recurring fields
     const safeRepeatEvery = (is_recurring && repeat_every) ? parseInt(repeat_every) || 1 : null;
     const safeRepeatUnit = (is_recurring && repeat_unit) ? repeat_unit : null;
@@ -467,7 +524,7 @@ const create = async (req, res) => {
         error: "company_id is required"
       });
     }
-    
+
     // Check if columns exist in database
     const [columns] = await pool.execute(
       `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -478,27 +535,29 @@ const create = async (req, res) => {
     const hasRepeatUnit = columnNames.includes('repeat_unit');
     const hasCycles = columnNames.includes('cycles');
     const hasIsRecurring = columnNames.includes('is_recurring');
-    
+
     const code = await generateTaskCode(safeProjectId, companyId);
 
     // ===============================
     // INSERT TASK - Updated with new fields
     // ===============================
     // Build dynamic INSERT query based on available columns
+    // Build dynamic INSERT query based on available columns
     let insertFields = [
       'company_id', 'code', 'title', 'description', 'sub_description', 'task_category',
-      'project_id', 'client_id', 'lead_id', 'start_date', 'due_date',
+      'project_id', 'client_id', 'lead_id', 'deal_id', 'contact_id', 'related_company_id',
+      'start_date', 'due_date', 'deadline',
       'status', 'priority', 'estimated_time', 'created_by'
     ];
     let insertValues = [
       companyId ?? null, code, taskTitle ?? null, safeDescription ?? null,
       safeSubDescription ?? null, safeTaskCategory ?? null,
-      safeProjectId ?? null, safeClientId ?? null, safeLeadId ?? null,
-      safeStartDate ?? null, safeDeadline ?? null,
+      safeProjectId ?? null, safeClientId ?? null, safeLeadId ?? null, safeDealId ?? null, safeContactId ?? null, safeRelatedCompanyId ?? null,
+      safeStartDate ?? null, safeDueDate ?? null, safeDeadline ?? null,
       safeStatus, safePriority || 'Medium', safeEstimatedTime ?? null,
       req.userId || req.body.user_id || 1
     ];
-    
+
     // Add recurring fields if columns exist
     if (hasIsRecurring) {
       insertFields.push('is_recurring');
@@ -516,7 +575,7 @@ const create = async (req, res) => {
       insertFields.push('cycles');
       insertValues.push(safeCycles);
     }
-    
+
     const placeholders = insertFields.map(() => '?').join(', ');
     const [result] = await pool.execute(
       `INSERT INTO tasks (${insertFields.join(', ')}) VALUES (${placeholders})`,
@@ -612,23 +671,23 @@ const create = async (req, res) => {
     // CREATE RECURRING TASK INSTANCES
     // ===============================
     const createdTaskIds = [taskId]; // Include the original task
-    
+
     if (safeIsRecurring && safeRepeatEvery && safeRepeatUnit && safeStartDate) {
       const startDate = new Date(safeStartDate);
       const totalCycles = safeCycles || 10; // Default to 10 if cycles not specified
-      
+
       // Calculate duration between start_date and due_date for maintaining the same duration
       let durationDays = 0;
       if (safeDeadline) {
         const dueDate = new Date(safeDeadline);
         durationDays = Math.ceil((dueDate - startDate) / (1000 * 60 * 60 * 24));
       }
-      
+
       // Create recurring instances
       for (let i = 1; i < totalCycles; i++) {
         let nextStartDate = new Date(startDate);
         let nextDueDate = safeDeadline ? new Date(safeDeadline) : null;
-        
+
         // Calculate next date based on repeat_unit
         if (safeRepeatUnit === 'Day(s)') {
           nextStartDate.setDate(nextStartDate.getDate() + (safeRepeatEvery * i));
@@ -651,10 +710,10 @@ const create = async (req, res) => {
             nextDueDate.setFullYear(nextDueDate.getFullYear() + (safeRepeatEvery * i));
           }
         }
-        
+
         // Generate code for recurring task
         const recurringCode = await generateTaskCode(safeProjectId, companyId);
-        
+
         // Build insert fields and values for recurring task
         let recurringInsertFields = [
           'company_id', 'code', 'title', 'description', 'sub_description', 'task_category',
@@ -669,22 +728,22 @@ const create = async (req, res) => {
           safeStatus, safePriority || 'Medium', safeEstimatedTime ?? null,
           req.userId || req.body.user_id || 1
         ];
-        
+
         // Add recurring fields (but mark as non-recurring for instances)
         if (hasIsRecurring) {
           recurringInsertFields.push('is_recurring');
           recurringInsertValues.push(0); // Instances are not recurring themselves
         }
-        
+
         const recurringPlaceholders = recurringInsertFields.map(() => '?').join(', ');
         const [recurringResult] = await pool.execute(
           `INSERT INTO tasks (${recurringInsertFields.join(', ')}) VALUES (${recurringPlaceholders})`,
           recurringInsertValues
         );
-        
+
         const recurringTaskId = recurringResult.insertId;
         createdTaskIds.push(recurringTaskId);
-        
+
         // Copy assignees to recurring task
         if (allAssignees.length > 0) {
           const recurringAssigneeValues = allAssignees.map(userId => [recurringTaskId, userId]);
@@ -693,7 +752,7 @@ const create = async (req, res) => {
             [recurringAssigneeValues]
           );
         }
-        
+
         // Copy tags to recurring task
         if (allTags.length > 0) {
           const recurringTagValues = allTags.map(tag => [recurringTaskId, tag]);
@@ -716,7 +775,7 @@ const create = async (req, res) => {
     res.status(201).json({
       success: true,
       data: tasks[0],
-      message: safeIsRecurring && safeCycles 
+      message: safeIsRecurring && safeCycles
         ? `Task and ${safeCycles - 1} recurring instances created successfully`
         : "Task created successfully",
       created_count: createdTaskIds.length
@@ -792,7 +851,7 @@ const update = async (req, res) => {
     // Build update query - Updated with new fields
     const allowedFields = [
       'title', 'description', 'sub_description', 'task_category', 'project_id',
-      'company_id', 'start_date', 'due_date', 'status', 'priority',
+      'company_id', 'start_date', 'due_date', 'deadline', 'status', 'priority',
       'estimated_time', 'completed_on'
     ];
 
@@ -1212,7 +1271,7 @@ const sendEmail = async (req, res) => {
     // Build data object for template
     const assigneeNames = assignees.map(a => a.name || a.email).join(', ');
     const assigneeEmails = assignees.map(a => a.email).filter(Boolean).join(', ');
-    
+
     const templateData = {
       TASK_TITLE: task.title || 'Task',
       TASK_URL: taskUrl,
@@ -1280,8 +1339,8 @@ const sendEmail = async (req, res) => {
 
     if (!emailResult.success) {
       console.error('Email sending failed:', emailResult.error);
-      return res.status(500).json({ 
-        success: false, 
+      return res.status(500).json({
+        success: false,
         error: emailResult.error || 'Failed to send task email',
         details: process.env.NODE_ENV === 'development' ? emailResult.message : undefined
       });
@@ -1289,8 +1348,8 @@ const sendEmail = async (req, res) => {
 
     console.log('✅ Task email sent successfully');
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Task sent successfully',
       data: { email: recipientEmail, messageId: emailResult.messageId }
     });
