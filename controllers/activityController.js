@@ -29,9 +29,10 @@ const getAll = async (req, res) => {
         }
 
         const [activities] = await pool.execute(
-            `SELECT a.*, u.name as creator_name 
+            `SELECT a.*, u.name as creator_name, u2.name as assigned_to_name
        FROM activities a
        LEFT JOIN users u ON a.created_by = u.id
+       LEFT JOIN users u2 ON a.assigned_to = u2.id
        ${whereClause}
        ORDER BY a.created_at DESC`,
             params
@@ -144,7 +145,11 @@ const create = async (req, res) => {
  */
 const createWithExtras = async (req, res) => {
     try {
-        let { type, description, reference_type, reference_id, is_pinned, follow_up_at, meeting_link } = req.body;
+        let {
+            type, description, reference_type, reference_id,
+            is_pinned, follow_up_at, meeting_link,
+            title, assigned_to, deadline, meeting_date, meeting_time, participants
+        } = req.body;
         const created_by = req.user?.id || req.body.created_by;
 
         // Normalize type to lowercase if it exists
@@ -213,26 +218,31 @@ const createWithExtras = async (req, res) => {
             company_id = reference_id;
         }
 
-        const [cols] = await pool.execute(
-            `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activities' AND COLUMN_NAME IN ('is_pinned','follow_up_at','meeting_link')`
-        );
-        const hasExtras = cols.length >= 1;
-
-        if (hasExtras) {
-            const pinned = is_pinned ? 1 : 0;
-            const [result] = await pool.execute(
-                `INSERT INTO activities (type, description, reference_type, reference_id, lead_id, company_id, contact_id, deal_id, created_by, is_pinned, follow_up_at, meeting_link)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [type, description ?? null, reference_type, reference_id, lead_id, company_id, contact_id, deal_id, created_by, pinned, follow_up_at ?? null, meeting_link ?? null]
-            );
-            return res.json({ success: true, data: { id: result.insertId, type, description, reference_type, reference_id, is_pinned: !!is_pinned, follow_up_at, meeting_link } });
-        }
-
+        const pinned = is_pinned ? 1 : 0;
         const [result] = await pool.execute(
-            `INSERT INTO activities (type, description, reference_type, reference_id, lead_id, company_id, contact_id, deal_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [type, description ?? null, reference_type, reference_id, lead_id, company_id, contact_id, deal_id, created_by]
+            `INSERT INTO activities (
+                type, title, description, reference_type, reference_id, 
+                lead_id, company_id, contact_id, deal_id, 
+                created_by, assigned_to, is_pinned, follow_up_at, 
+                deadline, meeting_date, meeting_time, participants, meeting_link
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                type, title ?? null, description ?? null, reference_type, reference_id,
+                lead_id, company_id, contact_id, deal_id,
+                created_by, assigned_to ?? null, pinned, follow_up_at ?? null,
+                deadline ?? null, meeting_date ?? null, meeting_time ?? null, participants ?? null, meeting_link ?? null
+            ]
         );
-        res.json({ success: true, data: { id: result.insertId, type, description, reference_type, reference_id } });
+
+        return res.json({
+            success: true,
+            data: {
+                id: result.insertId,
+                type, title, description, reference_type, reference_id,
+                is_pinned: !!is_pinned, follow_up_at, deadline, meeting_date, meeting_time, participants, meeting_link
+            }
+        });
     } catch (error) {
         console.error('Create activity error:', error);
         res.status(500).json({
@@ -250,23 +260,40 @@ const createWithExtras = async (req, res) => {
 const update = async (req, res) => {
     try {
         const { id } = req.params;
-        const { description, follow_up_at, meeting_link } = req.body;
+        const {
+            description, follow_up_at, meeting_link,
+            title, assigned_to, deadline, meeting_date, meeting_time, participants,
+            is_pinned
+        } = req.body;
 
-        const [cols] = await pool.execute(
-            `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activities' AND COLUMN_NAME IN ('follow_up_at','meeting_link')`
+        const [result] = await pool.execute(
+            `UPDATE activities SET 
+                description = COALESCE(?, description), 
+                title = COALESCE(?, title),
+                assigned_to = COALESCE(?, assigned_to),
+                deadline = COALESCE(?, deadline),
+                meeting_date = COALESCE(?, meeting_date),
+                meeting_time = COALESCE(?, meeting_time),
+                participants = COALESCE(?, participants),
+                follow_up_at = COALESCE(?, follow_up_at), 
+                meeting_link = COALESCE(?, meeting_link),
+                is_pinned = COALESCE(?, is_pinned)
+            WHERE id = ? AND is_deleted = 0`,
+            [
+                description ?? null,
+                title ?? null,
+                assigned_to ?? null,
+                deadline ?? null,
+                meeting_date ?? null,
+                meeting_time ?? null,
+                participants ?? null,
+                follow_up_at ?? null,
+                meeting_link ?? null,
+                is_pinned !== undefined ? (is_pinned ? 1 : 0) : null,
+                id
+            ]
         );
-        const hasExtras = cols.length >= 2;
 
-        if (hasExtras) {
-            const [result] = await pool.execute(
-                'UPDATE activities SET description = COALESCE(?, description), follow_up_at = ?, meeting_link = ? WHERE id = ? AND is_deleted = 0',
-                [description ?? null, follow_up_at !== undefined ? follow_up_at : null, meeting_link !== undefined ? meeting_link : null, id]
-            );
-            if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Activity not found' });
-            return res.json({ success: true, data: { id, updated: true } });
-        }
-
-        const [result] = await pool.execute('UPDATE activities SET description = COALESCE(?, description) WHERE id = ? AND is_deleted = 0', [description ?? null, id]);
         if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Activity not found' });
         res.json({ success: true, data: { id, updated: true } });
     } catch (error) {

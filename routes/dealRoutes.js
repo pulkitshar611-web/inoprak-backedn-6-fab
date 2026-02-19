@@ -12,6 +12,7 @@ router.use(verifyToken);
 const permissionModule = 'proposals';
 
 router.get('/filters', dealController.getFilters);
+router.get('/kanban-stats', requirePermission(permissionModule), dealController.getKanbanStats);
 router.get('/', requirePermission(permissionModule), dealController.getAll);
 // Deal contacts (link existing master contacts only) - must be before /:id
 router.get('/:id/contacts', requirePermission(permissionModule), dealController.getDealContacts);

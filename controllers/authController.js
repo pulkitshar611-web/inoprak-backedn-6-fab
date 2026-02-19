@@ -51,14 +51,14 @@ const login = async (req, res) => {
         `SELECT role FROM users WHERE email = ? AND is_deleted = 0`,
         [email]
       );
-      
+
       if (checkUser.length > 0) {
         return res.status(401).json({
           success: false,
           error: `User exists but role mismatch. Expected: ${normalizedRole}, Found: ${checkUser[0].role}`
         });
       }
-      
+
       return res.status(401).json({
         success: false,
         error: 'Invalid email, password, or role'
@@ -87,10 +87,10 @@ const login = async (req, res) => {
 
     // Generate JWT token
     const token = jwt.sign(
-      { 
+      {
         userId: user.id,
         companyId: user.company_id,
-        role: user.role 
+        role: user.role
       },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRE || '24h' }
@@ -194,19 +194,21 @@ const getCurrentUser = async (req, res) => {
     // Get userId from JWT token (req.userId set by auth middleware) or from query/body
     // DO NOT default to 1 - this was causing the bug!
     const userId = req.userId || req.query.user_id || req.body.user_id;
-    
+
     if (!userId) {
       return res.status(400).json({
         success: false,
         error: 'User ID is required. Please login again.'
       });
     }
-    
+
     console.log('getCurrentUser - userId:', userId);
-    
+
     // First, get basic user info with essential columns only
     const [users] = await pool.execute(
       `SELECT u.id, u.company_id, u.name, u.email, u.role, u.status, u.avatar, u.phone, u.address,
+              u.emergency_contact_name, u.emergency_contact_phone, u.emergency_contact_relation,
+              u.bank_name, u.bank_account_number, u.bank_ifsc, u.bank_branch,
               u.created_at,
               e.department_id, e.position_id,
               d.name as department_name,
@@ -220,38 +222,9 @@ const getCurrentUser = async (req, res) => {
        WHERE u.id = ? AND u.is_deleted = 0`,
       [userId]
     );
-    
-    // Try to get additional user fields if they exist
+
+    // Additional fields are now included in the main query
     let additionalFields = {};
-    try {
-      const [additionalData] = await pool.execute(
-        `SELECT 
-           emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
-           bank_name, bank_account_number,
-           billing_address, billing_city, billing_state, billing_country, billing_postal_code
-         FROM users WHERE id = ?`,
-        [userId]
-      );
-      if (additionalData.length > 0) {
-        additionalFields = additionalData[0];
-      }
-    } catch (additionalFieldsError) {
-      console.log('Some additional user fields may not exist, using defaults');
-    }
-    
-    // Try to get bank_ifsc and bank_branch separately (they might not exist)
-    try {
-      const [bankFields] = await pool.execute(
-        `SELECT bank_ifsc, bank_branch FROM users WHERE id = ?`,
-        [userId]
-      );
-      if (bankFields.length > 0) {
-        additionalFields.bank_ifsc = bankFields[0].bank_ifsc;
-        additionalFields.bank_branch = bankFields[0].bank_branch;
-      }
-    } catch (bankFieldsError) {
-      console.log('bank_ifsc/bank_branch columns may not exist');
-    }
 
     if (users.length === 0) {
       return res.status(404).json({
@@ -261,7 +234,7 @@ const getCurrentUser = async (req, res) => {
     }
 
     const user = users[0];
-    
+
     // For CLIENT users, get their client_id from the clients table
     let client_id = null;
     if (user.role && user.role.toUpperCase() === 'CLIENT') {
@@ -277,7 +250,7 @@ const getCurrentUser = async (req, res) => {
         console.error('Error fetching client ID:', err);
       }
     }
-    
+
     // Format response - merge basic user data with additional fields
     const userData = {
       id: user.id,
@@ -290,18 +263,13 @@ const getCurrentUser = async (req, res) => {
       avatar: user.avatar,
       phone: user.phone,
       address: user.address,
-      emergency_contact_name: additionalFields.emergency_contact_name || null,
-      emergency_contact_phone: additionalFields.emergency_contact_phone || null,
-      emergency_contact_relation: additionalFields.emergency_contact_relation || null,
-      bank_name: additionalFields.bank_name || null,
-      bank_account_number: additionalFields.bank_account_number || null,
-      bank_ifsc: additionalFields.bank_ifsc || null,
-      bank_branch: additionalFields.bank_branch || null,
-      billing_address: additionalFields.billing_address || null,
-      billing_city: additionalFields.billing_city || null,
-      billing_state: additionalFields.billing_state || null,
-      billing_country: additionalFields.billing_country || null,
-      billing_postal_code: additionalFields.billing_postal_code || null,
+      emergency_contact_name: user.emergency_contact_name,
+      emergency_contact_phone: user.emergency_contact_phone,
+      emergency_contact_relation: user.emergency_contact_relation,
+      bank_name: user.bank_name,
+      bank_account_number: user.bank_account_number,
+      bank_ifsc: user.bank_ifsc,
+      bank_branch: user.bank_branch,
       department_id: user.department_id,
       department: user.department_name,
       position_id: user.position_id,
@@ -329,7 +297,7 @@ const getCurrentUser = async (req, res) => {
  */
 const updateCurrentUser = async (req, res) => {
   try {
-    const { 
+    const {
       name, email, phone, address,
       emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
       bank_name, bank_account_number, bank_ifsc, bank_branch,

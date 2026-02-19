@@ -10,16 +10,16 @@ const pool = require('../config/db');
  */
 const normalizeUnit = (unit) => {
   const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
-  
+
   if (!unit) {
     return 'Pcs'; // Default
   }
-  
+
   // If already valid, return as is
   if (validUnits.includes(unit)) {
     return unit;
   }
-  
+
   // Normalize to valid ENUM value
   const unitLower = String(unit).toLowerCase().trim();
   if (unitLower.includes('pc') || unitLower.includes('piece')) {
@@ -302,10 +302,23 @@ const getAll = async (req, res) => {
         proposal.estimate_number = `PROPOSAL #${proposalNum}`;
       }
 
-      // Ensure status is lowercase for frontend
       if (proposal.status) {
         proposal.status = proposal.status.toLowerCase();
       }
+
+      // Get custom fields
+      const [customFieldsValues] = await pool.execute(
+        `SELECT cf.name, cfv.field_value 
+         FROM custom_field_values cfv
+         JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+         WHERE cfv.record_id = ? AND cfv.module = 'Proposals'`,
+        [proposal.id]
+      );
+      const custom_fields_data = {};
+      customFieldsValues.forEach(row => {
+        custom_fields_data[row.name] = row.field_value;
+      });
+      proposal.custom_fields = custom_fields_data;
     }
 
     res.json({
@@ -346,6 +359,20 @@ const getById = async (req, res) => {
     );
     proposal.items = items;
 
+    // Get custom fields
+    const [customFieldsValues] = await pool.execute(
+      `SELECT cf.name, cfv.field_value 
+       FROM custom_field_values cfv
+       JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+       WHERE cfv.record_id = ? AND cfv.module = 'Proposals'`,
+      [id]
+    );
+    const custom_fields_data = {};
+    customFieldsValues.forEach(row => {
+      custom_fields_data[row.name] = row.field_value;
+    });
+    proposal.custom_fields = custom_fields_data;
+
     res.json({ success: true, data: proposal });
   } catch (error) {
     console.error('Get proposal error:', error);
@@ -359,20 +386,21 @@ const create = async (req, res) => {
     console.log('=== CREATE PROPOSAL REQUEST ===');
     console.log('Request Body:', JSON.stringify(req.body, null, 2));
     console.log('Request Query:', req.query);
-    
+
     await connection.beginTransaction();
 
     const {
       proposal_date, valid_till, client_id, lead_id, project_id, tax, second_tax, note,
-      currency, status, items, description, terms, discount, discount_type, title
+      currency, status, items, description, terms, discount, discount_type, title,
+      custom_fields = {}
     } = req.body;
 
     const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
     console.log('Company ID:', companyId);
-    
+
     const proposal_number = await generateProposalNumber(companyId);
     console.log('Generated Proposal Number:', proposal_number);
-    
+
     const effectiveCreatedBy = req.body.user_id || req.query.user_id || req.userId || req.user?.id || 1;
     console.log('Created By:', effectiveCreatedBy);
 
@@ -402,7 +430,7 @@ const create = async (req, res) => {
     // Format dates
     const formattedProposalDate = formatDateForMySQL(proposal_date);
     let formattedValidTill = formatDateForMySQL(valid_till);
-    
+
     // If valid_till is null, set a default date (30 days from proposal_date or today)
     if (!formattedValidTill) {
       if (formattedProposalDate) {
@@ -422,27 +450,27 @@ const create = async (req, res) => {
 
     // Prepare insert values
     const insertValues = [
-        companyId || null,
-        proposal_number || null,
+      companyId || null,
+      proposal_number || null,
       formattedProposalDate,
       formattedValidTill, // Always has a value now
-        (currency && currency !== '') ? currency : 'USD',
-        (client_id && client_id !== '') ? parseInt(client_id) : null,
-        (lead_id && lead_id !== '') ? parseInt(lead_id) : null,
-        (project_id && project_id !== '') ? parseInt(project_id) : null,
+      (currency && currency !== '') ? currency : 'USD',
+      (client_id && client_id !== '') ? parseInt(client_id) : null,
+      (lead_id && lead_id !== '') ? parseInt(lead_id) : null,
+      (project_id && project_id !== '') ? parseInt(project_id) : null,
       taxValue,
       secondTaxValue,
-        (note && note !== '') ? note : null,
-        finalDescription,
-        (terms && terms !== '') ? terms : 'Thank you for your business.',
+      (note && note !== '') ? note : null,
+      finalDescription,
+      (terms && terms !== '') ? terms : 'Thank you for your business.',
       parseFloat(discount) || 0,
-        mappedDiscountType,
+      mappedDiscountType,
       parseFloat(totals.sub_total) || 0,
       parseFloat(totals.discount_amount) || 0,
       parseFloat(totals.tax_amount) || 0,
       parseFloat(totals.total) || 0,
-        mappedStatus || 'Draft',
-        effectiveCreatedBy || 1
+      mappedStatus || 'Draft',
+      effectiveCreatedBy || 1
     ];
 
     console.log('Insert Values:', insertValues);
@@ -472,33 +500,53 @@ const create = async (req, res) => {
         try {
           // Normalize unit to valid ENUM value
           const unitValue = normalizeUnit(item.unit);
-          
+
           // Truncate item_name if too long (max 255 chars)
           const itemName = String(item.item_name || '').substring(0, 255);
-          
-        await connection.execute(
-          `INSERT INTO estimate_items 
+
+          await connection.execute(
+            `INSERT INTO estimate_items 
            (estimate_id, item_name, description, quantity, unit, unit_price, tax, tax_rate, amount)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            proposalId,
+            [
+              proposalId,
               itemName,
-            item.description || '',
+              item.description || '',
               parseFloat(item.quantity) || 1,
               unitValue, // Now guaranteed to be valid ENUM value
               parseFloat(item.unit_price) || 0,
-            item.tax || '',
+              item.tax || '',
               parseFloat(item.tax_rate) || 0,
               parseFloat(item.amount) || 0
-          ]
-        );
+            ]
+          );
         } catch (itemError) {
           console.error('Error inserting item:', item, itemError);
           throw itemError;
-      }
+        }
       }
     } else {
       console.log('No items to insert');
+    }
+
+    // Insert custom fields
+    if (Object.keys(custom_fields).length > 0) {
+      for (const [fieldName, fieldValue] of Object.entries(custom_fields)) {
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // Get field ID by name and module
+          const [fieldRow] = await pool.execute(
+            `SELECT id FROM custom_fields WHERE name = ? AND module = 'Proposals' AND company_id = ?`,
+            [fieldName, companyId]
+          );
+          if (fieldRow.length > 0) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldRow[0].id, proposalId, 'Proposals', fieldValue.toString(), companyId]
+            );
+          }
+        }
+      }
     }
 
     await connection.commit();
@@ -552,7 +600,8 @@ const update = async (req, res) => {
     const { id } = req.params;
     const {
       proposal_date, valid_till, client_id, tax, second_tax, note,
-      currency, status, items, description, terms, discount, discount_type
+      currency, status, items, description, terms, discount, discount_type,
+      custom_fields
     } = req.body;
 
     // Check if proposal exists
@@ -682,6 +731,37 @@ const update = async (req, res) => {
       throw err;
     } finally {
       connection.release();
+    }
+
+    // Update custom fields if provided
+    if (custom_fields) {
+      const companyId = req.body.company_id || req.query.company_id || req.companyId || 1;
+      for (const [fieldName, fieldValue] of Object.entries(custom_fields)) {
+        const [fieldRow] = await pool.execute(
+          `SELECT id FROM custom_fields WHERE name = ? AND module = 'Proposals' AND company_id = ?`,
+          [fieldName, companyId]
+        );
+        if (fieldRow.length > 0) {
+          const fieldId = fieldRow[0].id;
+          const [existingValue] = await pool.execute(
+            `SELECT id FROM custom_field_values WHERE custom_field_id = ? AND record_id = ? AND module = 'Proposals'`,
+            [fieldId, id]
+          );
+
+          if (existingValue.length > 0) {
+            await pool.execute(
+              `UPDATE custom_field_values SET field_value = ? WHERE id = ?`,
+              [fieldValue !== null && fieldValue !== undefined ? fieldValue.toString() : null, existingValue[0].id]
+            );
+          } else if (fieldValue !== null && fieldValue !== undefined) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldId, id, 'Proposals', fieldValue.toString(), companyId]
+            );
+          }
+        }
+      }
     }
 
     // Fetch updated proposal

@@ -1,12 +1,12 @@
 -- Add emergency contact and bank details fields to users table
 ALTER TABLE `users` 
-ADD COLUMN `emergency_contact_name` VARCHAR(255) NULL AFTER `address`,
-ADD COLUMN `emergency_contact_phone` VARCHAR(50) NULL AFTER `emergency_contact_name`,
-ADD COLUMN `emergency_contact_relation` VARCHAR(100) NULL AFTER `emergency_contact_phone`,
-ADD COLUMN `bank_name` VARCHAR(255) NULL AFTER `emergency_contact_relation`,
-ADD COLUMN `bank_account_number` VARCHAR(100) NULL AFTER `bank_name`,
-ADD COLUMN `bank_ifsc` VARCHAR(50) NULL AFTER `bank_account_number`,
-ADD COLUMN `bank_branch` VARCHAR(255) NULL AFTER `bank_ifsc`;
+ADD COLUMN IF NOT EXISTS `emergency_contact_name` VARCHAR(255) NULL AFTER `address`,
+ADD COLUMN IF NOT EXISTS `emergency_contact_phone` VARCHAR(50) NULL AFTER `emergency_contact_name`,
+ADD COLUMN IF NOT EXISTS `emergency_contact_relation` VARCHAR(100) NULL AFTER `emergency_contact_phone`,
+ADD COLUMN IF NOT EXISTS `bank_name` VARCHAR(255) NULL AFTER `emergency_contact_relation`,
+ADD COLUMN IF NOT EXISTS `bank_account_number` VARCHAR(100) NULL AFTER `bank_name`,
+ADD COLUMN IF NOT EXISTS `bank_ifsc` VARCHAR(50) NULL AFTER `bank_account_number`,
+ADD COLUMN IF NOT EXISTS `bank_branch` VARCHAR(255) NULL AFTER `bank_ifsc`;
 
 -- Create task_comments table for task comments
 CREATE TABLE IF NOT EXISTS `task_comments` (

@@ -10,16 +10,16 @@ const pool = require('../config/db');
  */
 const normalizeUnit = (unit) => {
   const validUnits = ['Pcs', 'Kg', 'Hours', 'Days'];
-  
+
   if (!unit) {
     return 'Pcs'; // Default
   }
-  
+
   // If already valid, return as is
   if (validUnits.includes(unit)) {
     return unit;
   }
-  
+
   // Normalize to valid ENUM value
   const unitLower = String(unit).toLowerCase().trim();
   if (unitLower.includes('pc') || unitLower.includes('piece')) {
@@ -216,6 +216,20 @@ const getAll = async (req, res) => {
         [estimate.id]
       );
       estimate.items = items || [];
+
+      // Get custom fields
+      const [customFieldsValues] = await pool.execute(
+        `SELECT cf.name, cfv.field_value 
+         FROM custom_field_values cfv
+         JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+         WHERE cfv.record_id = ? AND cfv.module = 'Estimates'`,
+        [estimate.id]
+      );
+      const custom_fields_data = {};
+      customFieldsValues.forEach(row => {
+        custom_fields_data[row.name] = row.field_value;
+      });
+      estimate.custom_fields = custom_fields_data;
     }
 
     // Return response without pagination
@@ -259,6 +273,20 @@ const getById = async (req, res) => {
     );
     estimate.items = items;
 
+    // Get custom fields
+    const [customFieldsValues] = await pool.execute(
+      `SELECT cf.name, cfv.field_value 
+       FROM custom_field_values cfv
+       JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+       WHERE cfv.record_id = ? AND cfv.module = 'Estimates'`,
+      [id]
+    );
+    const custom_fields_data = {};
+    customFieldsValues.forEach(row => {
+      custom_fields_data[row.name] = row.field_value;
+    });
+    estimate.custom_fields = custom_fields_data;
+
     res.json({ success: true, data: estimate });
   } catch (error) {
     console.error('Get estimate error:', error);
@@ -275,14 +303,14 @@ const create = async (req, res) => {
     const {
       estimate_date, proposal_date, valid_till, currency, client_id, project_id, lead_id,
       calculate_tax, description, note, terms, tax, second_tax,
-      discount, discount_type, items = [], status
+      discount, discount_type, items = [], status, custom_fields = {}
     } = req.body;
 
     // No required validation - save whatever data is provided
 
     const companyId = req.body.company_id || req.query.company_id || 1;
     console.log('Company ID:', companyId);
-    
+
     const estimate_number = await generateEstimateNumber(companyId);
     console.log('Generated Estimate Number:', estimate_number);
 
@@ -384,10 +412,30 @@ const create = async (req, res) => {
       throw new Error('Failed to get insert ID after creating estimate');
     }
 
+    // Insert custom fields
+    if (Object.keys(custom_fields).length > 0) {
+      for (const [fieldName, fieldValue] of Object.entries(custom_fields)) {
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // Get field ID by name and module
+          const [fieldRow] = await pool.execute(
+            `SELECT id FROM custom_fields WHERE name = ? AND module = 'Estimates' AND company_id = ?`,
+            [fieldName, companyId]
+          );
+          if (fieldRow.length > 0) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldRow[0].id, estimateId, 'Estimates', fieldValue.toString(), companyId]
+            );
+          }
+        }
+      }
+    }
+
     // Insert items - calculate amount if not provided
     if (items.length > 0) {
       console.log('Inserting items:', items.length);
-      
+
       const itemValues = items.map(item => {
         const quantity = parseFloat(item.quantity || 1);
         const unitPrice = parseFloat(item.unit_price || 0);
@@ -473,8 +521,8 @@ const create = async (req, res) => {
     console.error('Error SQL State:', error.sqlState);
     console.error('Error SQL Message:', error.sqlMessage);
     console.error('Error stack:', error.stack);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: 'Failed to create estimate',
       details: process.env.NODE_ENV === 'development' ? {
         message: error.message,

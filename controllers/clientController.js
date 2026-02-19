@@ -114,6 +114,22 @@ const getAll = async (req, res) => {
       client.contacts = contacts;
     }
 
+    // Get custom fields for each client
+    for (let client of clients) {
+      const [customFieldsValues] = await pool.execute(
+        `SELECT cf.name, cfv.field_value 
+         FROM custom_field_values cfv
+         JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+         WHERE cfv.record_id = ? AND cfv.module = 'Clients'`,
+        [client.id]
+      );
+      const custom_fields_data = {};
+      customFieldsValues.forEach(row => {
+        custom_fields_data[row.name] = row.field_value;
+      });
+      client.custom_fields = custom_fields_data;
+    }
+
     res.json({
       success: true,
       data: clients
@@ -215,6 +231,20 @@ const getById = async (req, res) => {
       [client.id]
     );
     client.contacts = contacts;
+
+    // Get custom fields
+    const [customFieldsValues] = await pool.execute(
+      `SELECT cf.name, cfv.field_value 
+       FROM custom_field_values cfv
+       JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+       WHERE cfv.record_id = ? AND cfv.module = 'Clients'`,
+      [client.id]
+    );
+    const custom_fields_data = {};
+    customFieldsValues.forEach(row => {
+      custom_fields_data[row.name] = row.field_value;
+    });
+    client.custom_fields = custom_fields_data;
 
     res.json({
       success: true,
@@ -357,6 +387,27 @@ const create = async (req, res) => {
         `INSERT INTO client_managers (client_id, user_id) VALUES ?`,
         [managerValues]
       );
+    }
+
+    // Save custom fields if provided
+    if (req.body.custom_fields && Object.keys(req.body.custom_fields).length > 0) {
+      const customFields = req.body.custom_fields;
+      for (const [fieldName, fieldValue] of Object.entries(customFields)) {
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // Get field ID by name and module
+          const [fieldRow] = await connection.execute(
+            `SELECT id FROM custom_fields WHERE name = ? AND module = 'Clients' AND company_id = ?`,
+            [fieldName, companyId]
+          );
+          if (fieldRow.length > 0) {
+            await connection.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldRow[0].id, clientId, 'Clients', fieldValue.toString(), companyId]
+            );
+          }
+        }
+      }
     }
 
     await connection.commit();
@@ -524,6 +575,36 @@ const update = async (req, res) => {
           `INSERT INTO client_managers (client_id, user_id) VALUES ?`,
           [managerValues]
         );
+      }
+    }
+
+    // Update custom fields if provided
+    if (updateFields.custom_fields) {
+      for (const [fieldName, fieldValue] of Object.entries(updateFields.custom_fields)) {
+        const [fieldRow] = await pool.execute(
+          `SELECT id FROM custom_fields WHERE name = ? AND module = 'Clients' AND company_id = ?`,
+          [fieldName, companyId]
+        );
+        if (fieldRow.length > 0) {
+          const fieldId = fieldRow[0].id;
+          const [existingValue] = await pool.execute(
+            `SELECT id FROM custom_field_values WHERE custom_field_id = ? AND record_id = ? AND module = 'Clients'`,
+            [fieldId, id]
+          );
+
+          if (existingValue.length > 0) {
+            await pool.execute(
+              `UPDATE custom_field_values SET field_value = ? WHERE id = ?`,
+              [fieldValue !== null && fieldValue !== undefined ? fieldValue.toString() : null, existingValue[0].id]
+            );
+          } else if (fieldValue !== null && fieldValue !== undefined) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldId, id, 'Clients', fieldValue.toString(), companyId]
+            );
+          }
+        }
       }
     }
 

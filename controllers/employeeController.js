@@ -550,6 +550,8 @@ const getProfile = async (req, res) => {
       `SELECT e.*, 
               u.name, u.email, u.phone, u.address, u.role as user_role, u.status, u.avatar,
               u.company_id,
+              u.emergency_contact_name, u.emergency_contact_phone, u.emergency_contact_relation,
+              u.bank_name, u.bank_account_number, u.bank_ifsc, u.bank_branch,
               c.name as company_name,
               d.name as department_name, 
               p.name as position_name
@@ -666,6 +668,38 @@ const updateProfile = async (req, res) => {
     if (avatar !== undefined) {
       userUpdateFields.push('avatar = ?');
       userUpdateValues.push(avatar || null);
+    }
+
+    // New Fields: Emergency Contact
+    if (req.body.emergency_contact_name !== undefined) {
+      userUpdateFields.push('emergency_contact_name = ?');
+      userUpdateValues.push(req.body.emergency_contact_name || null);
+    }
+    if (req.body.emergency_contact_phone !== undefined) {
+      userUpdateFields.push('emergency_contact_phone = ?');
+      userUpdateValues.push(req.body.emergency_contact_phone || null);
+    }
+    if (req.body.emergency_contact_relation !== undefined) {
+      userUpdateFields.push('emergency_contact_relation = ?');
+      userUpdateValues.push(req.body.emergency_contact_relation || null);
+    }
+
+    // New Fields: Bank Details
+    if (req.body.bank_name !== undefined) {
+      userUpdateFields.push('bank_name = ?');
+      userUpdateValues.push(req.body.bank_name || null);
+    }
+    if (req.body.bank_account_number !== undefined) {
+      userUpdateFields.push('bank_account_number = ?');
+      userUpdateValues.push(req.body.bank_account_number || null);
+    }
+    if (req.body.bank_ifsc !== undefined) {
+      userUpdateFields.push('bank_ifsc = ?');
+      userUpdateValues.push(req.body.bank_ifsc || null);
+    }
+    if (req.body.bank_branch !== undefined) {
+      userUpdateFields.push('bank_branch = ?');
+      userUpdateValues.push(req.body.bank_branch || null);
     }
 
     if (userUpdateFields.length > 0) {

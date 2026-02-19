@@ -131,6 +131,7 @@ app.use(`${apiBase}/leads`, leadRoutes);
 app.use(`${apiBase}/clients`, clientRoutes);
 app.use(`${apiBase}/projects`, projectRoutes);
 app.use(`${apiBase}/tasks`, taskRoutes);
+app.use(`${apiBase}/meetings`, require('./routes/meetingRoutes'));
 app.use(`${apiBase}/invoices`, invoiceRoutes);
 app.use(`${apiBase}/estimates`, estimateRoutes);
 app.use(`${apiBase}/proposals`, proposalRoutes);

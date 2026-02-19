@@ -95,15 +95,19 @@ const getStagesByPipelineId = async (req, res) => {
 const createStage = async (req, res) => {
   try {
     const { pipeline_id } = req.params;
-    const { name, display_order, color } = req.body;
+    const { name, display_order, color, is_default } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'name is required' });
+
+    if (is_default) {
+      await pool.execute('UPDATE deal_pipeline_stages SET is_default = 0 WHERE pipeline_id = ?', [pipeline_id]);
+    }
 
     const order = display_order ?? 0;
     const [result] = await pool.execute(
-      'INSERT INTO deal_pipeline_stages (pipeline_id, name, display_order, color) VALUES (?, ?, ?, ?)',
-      [pipeline_id, name, order, color || '#3B82F6']
+      'INSERT INTO deal_pipeline_stages (pipeline_id, name, display_order, color, is_default) VALUES (?, ?, ?, ?, ?)',
+      [pipeline_id, name, order, color || '#3B82F6', is_default ? 1 : 0]
     );
-    res.status(201).json({ success: true, data: { id: result.insertId, pipeline_id, name, display_order: order, color: color || '#3B82F6' } });
+    res.status(201).json({ success: true, data: { id: result.insertId, pipeline_id, name, display_order: order, color: color || '#3B82F6', is_default: !!is_default } });
   } catch (err) {
     console.error('Deal stage create:', err);
     res.status(500).json({ success: false, error: 'Failed to create stage' });
@@ -113,11 +117,15 @@ const createStage = async (req, res) => {
 const updateStage = async (req, res) => {
   try {
     const { pipeline_id, stage_id } = req.params;
-    const { name, display_order, color } = req.body;
+    const { name, display_order, color, is_default } = req.body;
+
+    if (is_default) {
+      await pool.execute('UPDATE deal_pipeline_stages SET is_default = 0 WHERE pipeline_id = ?', [pipeline_id]);
+    }
 
     const [result] = await pool.execute(
-      'UPDATE deal_pipeline_stages SET name = COALESCE(?, name), display_order = COALESCE(?, display_order), color = COALESCE(?, color) WHERE id = ? AND pipeline_id = ?',
-      [name ?? null, display_order ?? null, color ?? null, stage_id, pipeline_id]
+      'UPDATE deal_pipeline_stages SET name = COALESCE(?, name), display_order = COALESCE(?, display_order), color = COALESCE(?, color), is_default = COALESCE(?, is_default) WHERE id = ? AND pipeline_id = ?',
+      [name ?? null, display_order ?? null, color ?? null, is_default !== undefined ? (is_default ? 1 : 0) : null, stage_id, pipeline_id]
     );
     if (result.affectedRows === 0) return res.status(404).json({ success: false, error: 'Stage not found' });
     res.json({ success: true, data: { id: stage_id, updated: true } });
@@ -130,6 +138,21 @@ const updateStage = async (req, res) => {
 const deleteStage = async (req, res) => {
   try {
     const { pipeline_id, stage_id } = req.params;
+    const { transfer_stage_id } = req.body;
+
+    // Check if deals exist in this stage
+    const [deals] = await pool.execute('SELECT COUNT(*) as count FROM deals WHERE stage_id = ? AND is_deleted = 0', [stage_id]);
+    const dealCount = deals[0].count;
+
+    if (dealCount > 0) {
+      if (!transfer_stage_id) {
+        return res.status(400).json({ success: false, error: 'Cannot delete stage with active deals. Please provide transfer_stage_id to reassign deals.', requires_transfer: true, deal_count: dealCount });
+      }
+
+      // Reassign deals
+      await pool.execute('UPDATE deals SET stage_id = ? WHERE stage_id = ?', [transfer_stage_id, stage_id]);
+    }
+
     const [result] = await pool.execute(
       'UPDATE deal_pipeline_stages SET is_deleted = 1 WHERE id = ? AND pipeline_id = ?',
       [stage_id, pipeline_id]

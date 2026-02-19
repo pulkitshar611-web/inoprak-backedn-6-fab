@@ -194,7 +194,7 @@ const getAll = async (req, res) => {
       params
     );
 
-    // Get members for each project
+    // Get members and custom fields for each project
     for (let project of projects) {
       const [members] = await pool.execute(
         `SELECT u.id, u.name, u.email FROM project_members pm
@@ -203,6 +203,20 @@ const getAll = async (req, res) => {
         [project.id]
       );
       project.members = members;
+
+      // Get custom fields
+      const [customFieldsValues] = await pool.execute(
+        `SELECT cf.name, cfv.field_value 
+         FROM custom_field_values cfv
+         JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+         WHERE cfv.record_id = ? AND cfv.module = 'Projects'`,
+        [project.id]
+      );
+      const custom_fields_data = {};
+      customFieldsValues.forEach(row => {
+        custom_fields_data[row.name] = row.field_value;
+      });
+      project.custom_fields = custom_fields_data;
     }
 
     res.json({
@@ -272,6 +286,20 @@ const getById = async (req, res) => {
     );
     project.members = members;
 
+    // Get custom fields
+    const [customFieldsValues] = await pool.execute(
+      `SELECT cf.name, cfv.field_value 
+       FROM custom_field_values cfv
+       JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+       WHERE cfv.record_id = ? AND cfv.module = 'Projects'`,
+      [project.id]
+    );
+    const custom_fields_data = {};
+    customFieldsValues.forEach(row => {
+      custom_fields_data[row.name] = row.field_value;
+    });
+    project.custom_fields = custom_fields_data;
+
     res.json({
       success: true,
       data: project
@@ -321,7 +349,7 @@ const create = async (req, res) => {
       company_id, short_code, project_name, description, start_date, deadline, no_deadline,
       budget, project_category, project_sub_category, department_id, client_id,
       project_manager_id, project_summary, notes, public_gantt_chart, public_task_board,
-      task_approval, label, project_members = [], status, progress, price
+      task_approval, label, project_members = [], status, progress, price, custom_fields = {}
     } = req.body;
 
     // Validate company_id is required
@@ -415,6 +443,26 @@ const create = async (req, res) => {
         `INSERT INTO project_members (project_id, user_id) VALUES ?`,
         [memberValues]
       );
+    }
+
+    // Insert custom fields
+    if (Object.keys(custom_fields).length > 0) {
+      for (const [fieldName, fieldValue] of Object.entries(custom_fields)) {
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // Get field ID by name and module
+          const [fieldRow] = await pool.execute(
+            `SELECT id FROM custom_fields WHERE name = ? AND module = 'Projects' AND company_id = ?`,
+            [fieldName, company_id]
+          );
+          if (fieldRow.length > 0) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldRow[0].id, projectId, 'Projects', fieldValue.toString(), company_id]
+            );
+          }
+        }
+      }
     }
 
     // Get created project with joins
@@ -522,6 +570,37 @@ const update = async (req, res) => {
           `INSERT INTO project_members (project_id, user_id) VALUES ?`,
           [memberValues]
         );
+      }
+    }
+
+    // Update custom fields if provided
+    if (updateFields.custom_fields) {
+      const companyId = req.companyId || req.query.company_id || req.body.company_id || 1; // Need companyId here
+      for (const [fieldName, fieldValue] of Object.entries(updateFields.custom_fields)) {
+        const [fieldRow] = await pool.execute(
+          `SELECT id FROM custom_fields WHERE name = ? AND module = 'Projects' AND company_id = ?`,
+          [fieldName, companyId]
+        );
+        if (fieldRow.length > 0) {
+          const fieldId = fieldRow[0].id;
+          const [existingValue] = await pool.execute(
+            `SELECT id FROM custom_field_values WHERE custom_field_id = ? AND record_id = ? AND module = 'Projects'`,
+            [fieldId, id]
+          );
+
+          if (existingValue.length > 0) {
+            await pool.execute(
+              `UPDATE custom_field_values SET field_value = ? WHERE id = ?`,
+              [fieldValue !== null && fieldValue !== undefined ? fieldValue.toString() : null, existingValue[0].id]
+            );
+          } else if (fieldValue !== null && fieldValue !== undefined) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldId, id, 'Projects', fieldValue.toString(), companyId]
+            );
+          }
+        }
       }
     }
 

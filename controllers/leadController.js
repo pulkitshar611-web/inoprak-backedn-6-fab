@@ -128,6 +128,7 @@ const sanitizeLead = (lead) => {
   // Let's keep dates as null if empty, but probability/value as 0
   if (sanitized.value === null) sanitized.value = '0.00';
   if (sanitized.probability === null) sanitized.probability = 0;
+  if (sanitized.custom_fields === undefined) sanitized.custom_fields = {};
 
   return sanitized;
 };
@@ -204,7 +205,20 @@ const getAll = async (req, res) => {
         price: s.item_price || 0
       }));
 
-      return sanitizeLead({ ...lead, labels: leadLabels, services: leadServices });
+      // Get custom fields
+      const [customFieldsValues] = await pool.execute(
+        `SELECT cf.name, cfv.field_value 
+         FROM custom_field_values cfv
+         JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+         WHERE cfv.record_id = ? AND cfv.module = 'Leads'`,
+        [lead.id]
+      );
+      const custom_fields = {};
+      customFieldsValues.forEach(row => {
+        custom_fields[row.name] = row.field_value;
+      });
+
+      return sanitizeLead({ ...lead, labels: leadLabels, services: leadServices, custom_fields });
     }));
 
     res.json({
@@ -284,6 +298,20 @@ const getById = async (req, res) => {
       price: s.item_price || 0
     }));
 
+    // Get custom fields
+    const [customFieldsValues] = await pool.execute(
+      `SELECT cf.name, cfv.field_value 
+       FROM custom_field_values cfv
+       JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+       WHERE cfv.record_id = ? AND cfv.module = 'Leads'`,
+      [lead.id]
+    );
+    const custom_fields = {};
+    customFieldsValues.forEach(row => {
+      custom_fields[row.name] = row.field_value;
+    });
+    lead.custom_fields = custom_fields;
+
     res.json({
       success: true,
       data: sanitizeLead(lead)
@@ -310,8 +338,29 @@ const create = async (req, res) => {
       lead_type, company_name, person_name, email, phone,
       owner_id, status, source, address,
       city, state, zip, country, value, due_followup,
-      notes, probability, call_this_week, labels = [], services = []
+      notes, probability, call_this_week, labels = [], services = [], custom_fields = {}
     } = req.body;
+
+    // Default Pipeline & Stage Logic for Leads
+    let { pipeline_id, stage_id } = req.body;
+
+    if (!pipeline_id) {
+      const [defPipe] = await pool.execute('SELECT id FROM lead_pipelines WHERE company_id = ? AND is_default = 1 LIMIT 1', [req.companyId || req.body.company_id || 1]);
+      if (defPipe.length > 0) pipeline_id = defPipe[0].id;
+      else {
+        const [anyPipe] = await pool.execute('SELECT id FROM lead_pipelines WHERE company_id = ? AND is_deleted = 0 LIMIT 1', [req.companyId || req.body.company_id || 1]);
+        if (anyPipe.length > 0) pipeline_id = anyPipe[0].id;
+      }
+    }
+
+    if (pipeline_id && !stage_id) {
+      const [defStage] = await pool.execute('SELECT id FROM lead_pipeline_stages WHERE pipeline_id = ? AND is_default = 1 LIMIT 1', [pipeline_id]);
+      if (defStage.length > 0) stage_id = defStage[0].id;
+      else {
+        const [firstStage] = await pool.execute('SELECT id FROM lead_pipeline_stages WHERE pipeline_id = ? AND is_deleted = 0 ORDER BY display_order ASC LIMIT 1', [pipeline_id]);
+        if (firstStage.length > 0) stage_id = firstStage[0].id;
+      }
+    }
 
     // Sanitize services array - ensure it's an array and filter out invalid values
     let sanitizedServices = [];
@@ -351,8 +400,9 @@ const create = async (req, res) => {
       `INSERT INTO leads (
         company_id, lead_type, company_name, person_name, email, phone,
         owner_id, status, source, address, city, state, zip, country,
-        value, due_followup, notes, probability, call_this_week, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        value, due_followup, notes, probability, call_this_week, created_by,
+        pipeline_id, stage_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         companyId,
         lead_type || 'Organization',
@@ -373,7 +423,9 @@ const create = async (req, res) => {
         notes ?? null,
         sanitizedProbability,
         call_this_week ?? false,
-        userId
+        userId,
+        pipeline_id ?? null,
+        stage_id ?? null
       ]
     );
 
@@ -405,6 +457,27 @@ const create = async (req, res) => {
       }
     } else {
       console.log('No services to insert or services array is empty');
+    }
+
+    // Insert custom fields
+    if (Object.keys(custom_fields).length > 0) {
+      console.log('Inserting custom fields:', custom_fields);
+      for (const [fieldName, fieldValue] of Object.entries(custom_fields)) {
+        if (fieldValue !== undefined && fieldValue !== null) {
+          // Get field ID by name and module
+          const [fieldRow] = await pool.execute(
+            `SELECT id FROM custom_fields WHERE name = ? AND module = 'Leads' AND company_id = ?`,
+            [fieldName, companyId]
+          );
+          if (fieldRow.length > 0) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldRow[0].id, leadId, 'Leads', fieldValue.toString(), companyId]
+            );
+          }
+        }
+      }
     }
 
     // Get created lead with company name and owner details
@@ -540,7 +613,6 @@ const update = async (req, res) => {
 
     // Update services if provided
     if (updateFields.services !== undefined) {
-      // Sanitize services array - ensure it's an array and filter out invalid values
       let sanitizedServices = [];
       if (Array.isArray(updateFields.services)) {
         sanitizedServices = updateFields.services
@@ -551,15 +623,11 @@ const update = async (req, res) => {
           })
           .filter(s => s !== null);
       } else if (updateFields.services) {
-        // Handle single value
         const num = parseInt(updateFields.services);
         if (!isNaN(num)) {
           sanitizedServices = [num];
         }
       }
-
-      console.log('Update - Original services:', updateFields.services);
-      console.log('Update - Sanitized services:', sanitizedServices);
 
       await pool.execute(`DELETE FROM lead_services WHERE lead_id = ?`, [id]);
       if (sanitizedServices.length > 0) {
@@ -569,10 +637,39 @@ const update = async (req, res) => {
             `INSERT INTO lead_services (lead_id, item_id, company_id) VALUES ?`,
             [serviceValues]
           );
-          console.log('Update - Services inserted successfully');
         } catch (serviceError) {
           console.error('Error inserting services during update:', serviceError);
-          // Don't fail the update if services fail
+        }
+      }
+    }
+
+    // Update custom fields if provided
+    if (updateFields.custom_fields) {
+      console.log('Updating custom fields:', updateFields.custom_fields);
+      for (const [fieldName, fieldValue] of Object.entries(updateFields.custom_fields)) {
+        const [fieldRow] = await pool.execute(
+          `SELECT id FROM custom_fields WHERE name = ? AND module = 'Leads' AND company_id = ?`,
+          [fieldName, companyId]
+        );
+        if (fieldRow.length > 0) {
+          const fieldId = fieldRow[0].id;
+          const [existingValue] = await pool.execute(
+            `SELECT id FROM custom_field_values WHERE custom_field_id = ? AND record_id = ? AND module = 'Leads'`,
+            [fieldId, id]
+          );
+
+          if (existingValue.length > 0) {
+            await pool.execute(
+              `UPDATE custom_field_values SET field_value = ? WHERE id = ?`,
+              [fieldValue !== null && fieldValue !== undefined ? fieldValue.toString() : null, existingValue[0].id]
+            );
+          } else if (fieldValue !== null && fieldValue !== undefined) {
+            await pool.execute(
+              `INSERT INTO custom_field_values (custom_field_id, record_id, module, field_value, company_id)
+               VALUES (?, ?, ?, ?, ?)`,
+              [fieldId, id, 'Leads', fieldValue.toString(), companyId]
+            );
+          }
         }
       }
     }
@@ -610,6 +707,20 @@ const update = async (req, res) => {
         name: s.item_name || 'Unknown Item',
         price: s.item_price || 0
       }));
+
+      // Get custom fields
+      const [customFieldsValues] = await pool.execute(
+        `SELECT cf.name, cfv.field_value 
+         FROM custom_field_values cfv
+         JOIN custom_fields cf ON cfv.custom_field_id = cf.id
+         WHERE cfv.record_id = ? AND cfv.module = 'Leads'`,
+        [id]
+      );
+      const custom_fields_data = {};
+      customFieldsValues.forEach(row => {
+        custom_fields_data[row.name] = row.field_value;
+      });
+      updatedLead.custom_fields = custom_fields_data;
     }
 
     res.json({

@@ -110,6 +110,35 @@ const getAll = async (req, res) => {
             whereClause += ' AND (e.client_id = ? OR c.owner_id = ?)';
             params.push(req.query.client_id, req.query.client_id);
         }
+        // New filters for Kanban
+        if (req.query.assigned_to) {
+            whereClause += ' AND e.assigned_to = ?';
+            params.push(req.query.assigned_to);
+        }
+        if (req.query.pipeline_id) {
+            whereClause += ' AND e.pipeline_id = ?';
+            params.push(req.query.pipeline_id);
+        }
+        if (req.query.stage_id) {
+            whereClause += ' AND e.stage_id = ?';
+            params.push(req.query.stage_id);
+        }
+        if (req.query.date_from) {
+            whereClause += ' AND DATE(e.created_at) >= ?';
+            params.push(req.query.date_from);
+        }
+        if (req.query.date_to) {
+            whereClause += ' AND DATE(e.created_at) <= ?';
+            params.push(req.query.date_to);
+        }
+        if (req.query.min_value) {
+            whereClause += ' AND e.total >= ?';
+            params.push(parseFloat(req.query.min_value));
+        }
+        if (req.query.max_value) {
+            whereClause += ' AND e.total <= ?';
+            params.push(parseFloat(req.query.max_value));
+        }
 
         const [deals] = await pool.execute(
             `SELECT e.*, 
@@ -117,6 +146,7 @@ const getAll = async (req, res) => {
                     p.project_name, 
                     comp.name as company_name, 
                     u.name as created_by_name,
+                    au.name as assigned_to_name,
                     ds.name as stage_name,
                     ds.color as stage_color,
                     dp.name as pipeline_name
@@ -125,6 +155,7 @@ const getAll = async (req, res) => {
        LEFT JOIN projects p ON e.project_id = p.id
        LEFT JOIN companies comp ON e.company_id = comp.id
        LEFT JOIN users u ON e.created_by = u.id
+       LEFT JOIN users au ON e.assigned_to = au.id
        LEFT JOIN deal_pipeline_stages ds ON e.stage_id = ds.id
        LEFT JOIN deal_pipelines dp ON e.pipeline_id = dp.id
        ${whereClause}
@@ -152,6 +183,7 @@ const getById = async (req, res) => {
                     p.project_name, 
                     comp.name as company_name, 
                     u.name as created_by_name,
+                    au.name as assigned_to_name,
                     ds.name as stage_name,
                     ds.color as stage_color,
                     dp.name as pipeline_name
@@ -160,6 +192,7 @@ const getById = async (req, res) => {
        LEFT JOIN projects p ON e.project_id = p.id
        LEFT JOIN companies comp ON e.company_id = comp.id
        LEFT JOIN users u ON e.created_by = u.id
+       LEFT JOIN users au ON e.assigned_to = au.id
        LEFT JOIN deal_pipeline_stages ds ON e.stage_id = ds.id
        LEFT JOIN deal_pipelines dp ON e.pipeline_id = dp.id
        WHERE e.id = ? AND e.is_deleted = 0`,
@@ -289,12 +322,34 @@ const create = async (req, res) => {
         const {
             deal_date, valid_till, currency, client_id, project_id, lead_id, title,
             calculate_tax, description, note, terms, tax, second_tax,
-            discount, discount_type, items = [], status, total, sub_total
+            discount, discount_type, items = [], status, total, sub_total, assigned_to
         } = req.body;
 
         const companyId = req.body.company_id || req.query.company_id || 1;
         const deal_number = await generateDealNumber(companyId);
         const createdBy = req.body.user_id || req.userId || 1;
+
+        // Default Pipeline & Stage Logic
+        let { pipeline_id, stage_id } = req.body;
+
+        if (!pipeline_id) {
+            const [defPipe] = await pool.execute('SELECT id FROM deal_pipelines WHERE company_id = ? AND is_default = 1 LIMIT 1', [companyId]);
+            if (defPipe.length > 0) pipeline_id = defPipe[0].id;
+            else {
+                const [anyPipe] = await pool.execute('SELECT id FROM deal_pipelines WHERE company_id = ? AND is_deleted = 0 LIMIT 1', [companyId]);
+                if (anyPipe.length > 0) pipeline_id = anyPipe[0].id;
+            }
+        }
+
+        if (pipeline_id && !stage_id) {
+            const [defStage] = await pool.execute('SELECT id FROM deal_pipeline_stages WHERE pipeline_id = ? AND is_default = 1 LIMIT 1', [pipeline_id]);
+            if (defStage.length > 0) stage_id = defStage[0].id;
+            else {
+                const [firstStage] = await pool.execute('SELECT id FROM deal_pipeline_stages WHERE pipeline_id = ? AND is_deleted = 0 ORDER BY display_order ASC LIMIT 1', [pipeline_id]);
+                if (firstStage.length > 0) stage_id = firstStage[0].id;
+            }
+        }
+
 
         let totals = { sub_total: 0, discount_amount: 0, tax_amount: 0, total: 0 };
 
@@ -314,8 +369,8 @@ const create = async (req, res) => {
             `INSERT INTO deals (
         company_id, deal_number, deal_date, valid_till, currency, client_id, project_id, lead_id, title,
         calculate_tax, description, note, terms, tax, second_tax, discount, discount_type,
-        sub_total, discount_amount, tax_amount, total, created_by, status, pipeline_id, stage_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sub_total, discount_amount, tax_amount, total, created_by, status, pipeline_id, stage_id, assigned_to
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 companyId, deal_number, deal_date ?? null, valid_till ?? null, currency || 'USD',
                 client_id ?? null, project_id ?? null, lead_id ?? null, title ?? null,
@@ -323,7 +378,8 @@ const create = async (req, res) => {
                 tax ?? null, second_tax ?? null, discount ?? 0, discount_type || '%',
                 totals.sub_total, totals.discount_amount, totals.tax_amount, totals.total,
                 createdBy, normalizeDealStatus(status),
-                req.body.pipeline_id ?? null, req.body.stage_id ?? null
+                pipeline_id ?? null, stage_id ?? null,
+                assigned_to ?? null
             ]
         );
 
@@ -368,11 +424,19 @@ const update = async (req, res) => {
         const [exists] = await pool.execute('SELECT id FROM deals WHERE id = ?', [id]);
         if (exists.length === 0) return res.status(404).json({ success: false, error: 'Deal not found' });
 
+        // Whitelist of actual DB columns — prevents unknown column errors from extra frontend fields
+        const ALLOWED_DEAL_COLUMNS = new Set([
+            'deal_date', 'valid_till', 'currency', 'client_id', 'project_id', 'lead_id', 'title',
+            'calculate_tax', 'description', 'note', 'terms', 'tax', 'second_tax',
+            'discount', 'discount_type', 'sub_total', 'discount_amount', 'tax_amount', 'total',
+            'status', 'pipeline_id', 'stage_id', 'assigned_to', 'company_id', 'created_by'
+        ]);
+
         if (Object.keys(fields).length > 0) {
             const updates = [];
             const values = [];
             for (const [key, val] of Object.entries(fields)) {
-                if (val !== undefined && key !== 'items' && key !== 'id') {
+                if (val !== undefined && ALLOWED_DEAL_COLUMNS.has(key)) {
                     updates.push(`${key} = ?`);
                     values.push(key === 'status' ? normalizeDealStatus(val) : val);
                 }
@@ -474,6 +538,46 @@ const updateStage = async (req, res) => {
 }
 
 /**
+ * Get Kanban stats: count and total value per stage for a pipeline
+ * GET /api/v1/deals/kanban-stats?company_id=&pipeline_id=
+ */
+const getKanbanStats = async (req, res) => {
+    try {
+        const { company_id, pipeline_id } = req.query;
+        if (!company_id) return res.status(400).json({ success: false, error: 'company_id is required' });
+
+        let whereClause = 'WHERE d.company_id = ? AND d.is_deleted = 0';
+        const params = [company_id];
+
+        if (pipeline_id) {
+            whereClause += ' AND d.pipeline_id = ?';
+            params.push(pipeline_id);
+        }
+
+        const [stats] = await pool.execute(
+            `SELECT 
+                d.stage_id,
+                ds.name as stage_name,
+                ds.color as stage_color,
+                ds.display_order,
+                COUNT(d.id) as deal_count,
+                COALESCE(SUM(d.total), 0) as total_value
+             FROM deals d
+             LEFT JOIN deal_pipeline_stages ds ON d.stage_id = ds.id
+             ${whereClause}
+             GROUP BY d.stage_id, ds.name, ds.color, ds.display_order
+             ORDER BY ds.display_order ASC`,
+            params
+        );
+
+        res.json({ success: true, data: stats });
+    } catch (error) {
+        console.error('Get kanban stats error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+/**
  * Get deal activities
  * GET /api/v1/deals/:id/activities
  */
@@ -565,6 +669,7 @@ module.exports = {
     getFilters,
     updateStatus,
     updateStage,
+    getKanbanStats,
     getDealContacts,
     addContactToDeal,
     removeContactFromDeal,

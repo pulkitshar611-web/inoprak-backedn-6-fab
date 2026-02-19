@@ -4,6 +4,9 @@
 -- Based on: Frontend UI Analysis
 -- =====================================================
 
+-- Use the correct database
+USE crm_db_innopark;
+
 -- Drop existing tables (for fresh install)
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS `audit_logs`;
