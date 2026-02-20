@@ -33,7 +33,7 @@ const getAll = async (req, res) => {
                    c.name as created_by_name,
                    CASE 
                      WHEN t.related_to_type = 'lead' THEN l.person_name
-                     WHEN t.related_to_type = 'deal' THEN d.name
+                     WHEN t.related_to_type = 'deal' THEN d.title
                      WHEN t.related_to_type = 'contact' THEN con.name
                      WHEN t.related_to_type = 'company' THEN comp.name
                      WHEN t.related_to_type = 'project' THEN p.project_name
