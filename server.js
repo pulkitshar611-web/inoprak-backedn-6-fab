@@ -77,43 +77,18 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
+// CORS - Allow multiple origins
+app.use(cors({
+  origin: true, // Allow all origins dynamically
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400 // Cache preflight request for 24 hours
+}));
 
-
-
-const allowedOrigins = [
-  "https://worksuit-d.kiaantechnology.com",
-  "http://localhost:3000",
-  "http://localhost:5173",
-];
-
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow Postman / Server Requests (no origin)
-      if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("❌ CORS Not Allowed: " + origin));
-      }
-    },
-
-    credentials: true,
-
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Accept"
-    ],
-  })
-);
-
-// ✅ Handle Preflight Requests
-app.options("*", cors());
-
+// Handle preflight requests
+app.options('*', cors());
 
 // Body parser
 app.use(express.json({ limit: '50mb' }));

@@ -4,8 +4,8 @@ const getAll = async (req, res) => {
     try {
         const companyId = req.query.company_id || req.body.company_id || req.user?.company_id || 1;
         const { assigned_to, date_from, date_to, related_to_type, related_to_id } = req.query;
-        const userRole = req.user?.role || 'EMPLOYEE';
-        const userId = req.user?.id;
+        const userRole = req.user?.role || 'ADMIN';
+        const userId = req.user?.id || null;
 
         let query = `
             SELECT m.*, 
