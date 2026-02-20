@@ -1390,7 +1390,7 @@ INSERT INTO `invoice_items` (`invoice_id`, `item_name`, `description`, `quantity
 INSERT INTO `estimates` (`company_id`, `estimate_number`, `valid_till`, `currency`, `client_id`, `project_id`, `calculate_tax`, `discount`, `discount_type`, `sub_total`, `discount_amount`, `tax_amount`, `total`, `status`, `created_by`) VALUES
 (1, 'EST-001', '2025-01-20', 'USD', 1, NULL, 'After Discount', 0.00, '%', 15000.00, 0.00, 1500.00, 16500.00, 'Waiting', 1),
 (1, 'EST-002', '2025-02-15', 'USD', 2, NULL, 'After Discount', 5.00, '%', 30000.00, 1500.00, 2850.00, 31350.00, 'Waiting', 1),
-(1, 'EST-003', '2025-01-10', 'USD', 3, NULL, 'After Discount', 10.00, '%', 8000.00, 800.00, 720.00, 7920.00, 'Accepted', 1);
+(1, 'EST-003', '2025-01-10', 'USD', 3, NULL, 'After Discount', 10.00, '%', 8001.00, 800.00, 720.00, 7920.00, 'Accepted', 1);
 
 -- Estimate Items
 INSERT INTO `estimate_items` (`estimate_id`, `item_name`, `description`, `quantity`, `unit`, `unit_price`, `tax`, `tax_rate`, `amount`) VALUES
@@ -1398,7 +1398,7 @@ INSERT INTO `estimate_items` (`estimate_id`, `item_name`, `description`, `quanti
 (1, 'Design Mockups', 'UI/UX design mockups', 8.00, 'Hours', 500.00, 'GST: 10%', 10.00, 4400.00),
 (2, 'Full Stack Development', 'Complete application development', 60.00, 'Hours', 400.00, 'VAT: 10%', 10.00, 26400.00),
 (2, 'Deployment', 'Server setup and deployment', 10.00, 'Hours', 300.00, 'VAT: 10%', 10.00, 3300.00),
-(3, 'SEO Services', 'Search engine optimization', 1.00, 'Pcs', 8000.00, 'GST: 10%', 10.00, 8800.00);
+(3, 'SEO Services', 'Search engine optimization', 1.00, 'Pcs', 8001.00, 'GST: 10%', 10.00, 8800.00);
 
 -- Payments
 INSERT INTO `payments` (`company_id`, `invoice_id`, `project_id`, `paid_on`, `amount`, `currency`, `exchange_rate`, `transaction_id`, `payment_gateway`, `bank_account`, `status`, `created_by`) VALUES
@@ -1540,7 +1540,7 @@ INSERT INTO `finance_templates` (`company_id`, `name`, `type`, `template_data`) 
 -- Documents
 INSERT INTO `documents` (`company_id`, `user_id`, `title`, `category`, `file_path`, `file_name`, `file_size`, `file_type`, `description`) VALUES
 (1, 1, 'Company Policy', 'Policy', '/uploads/policy.pdf', 'company_policy.pdf', 1024000, 'application/pdf', 'Company HR policy document'),
-(1, 2, 'Project Proposal', 'Proposal', '/uploads/proposal.pdf', 'project_proposal.pdf', 2048000, 'application/pdf', 'Project proposal for client'),
+(1, 2, 'Project Proposal', 'Proposal', '/uploads/proposal.pdf', 'project_proposal.pdf', 2048001, 'application/pdf', 'Project proposal for client'),
 (1, NULL, 'User Guide', 'Documentation', '/uploads/guide.pdf', 'user_guide.pdf', 1536000, 'application/pdf', 'User manual and guide');
 
 -- Social Leads
@@ -1593,7 +1593,7 @@ INSERT INTO `estimate_items` (`estimate_id`, `item_name`, `description`, `quanti
 (1, 'Design Mockups', 'UI/UX design mockups', 8.00, 'Hours', 500.00, 'GST: 10%', 10.00, 4400.00),
 (2, 'Full Stack Development', 'Complete application development', 60.00, 'Hours', 400.00, 'VAT: 10%', 10.00, 26400.00),
 (2, 'Deployment', 'Server setup and deployment', 10.00, 'Hours', 300.00, 'VAT: 10%', 10.00, 3300.00),
-(3, 'SEO Services', 'Search engine optimization', 1.00, 'Pcs', 8000.00, 'GST: 10%', 10.00, 8800.00);
+(3, 'SEO Services', 'Search engine optimization', 1.00, 'Pcs', 8001.00, 'GST: 10%', 10.00, 8800.00);
 
 -- Payments
 INSERT INTO `payments` (`company_id`, `invoice_id`, `project_id`, `paid_on`, `amount`, `currency`, `exchange_rate`, `transaction_id`, `payment_gateway`, `bank_account`, `status`, `created_by`) VALUES
@@ -1735,7 +1735,7 @@ INSERT INTO `finance_templates` (`company_id`, `name`, `type`, `template_data`) 
 -- Documents
 INSERT INTO `documents` (`company_id`, `user_id`, `title`, `category`, `file_path`, `file_name`, `file_size`, `file_type`, `description`) VALUES
 (1, 1, 'Company Policy', 'Policy', '/uploads/policy.pdf', 'company_policy.pdf', 1024000, 'application/pdf', 'Company HR policy document'),
-(1, 2, 'Project Proposal', 'Proposal', '/uploads/proposal.pdf', 'project_proposal.pdf', 2048000, 'application/pdf', 'Project proposal for client'),
+(1, 2, 'Project Proposal', 'Proposal', '/uploads/proposal.pdf', 'project_proposal.pdf', 2048001, 'application/pdf', 'Project proposal for client'),
 (1, NULL, 'User Guide', 'Documentation', '/uploads/guide.pdf', 'user_guide.pdf', 1536000, 'application/pdf', 'User manual and guide');
 
 -- Social Leads

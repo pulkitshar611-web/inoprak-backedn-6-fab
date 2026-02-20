@@ -17,7 +17,7 @@ const getAll = async (req, res) => {
   try {
     // Allow company_id from query for testing, fallback to user's company or 1
     const companyId = req.query.company_id || req.user?.company_id || 1;
-    const { assigned_to, status, priority, related_to_type, related_to_id, date_from, date_to, category, project_id, page = 1, limit = 50 } = req.query;
+    const { assigned_to, status, priority, related_to_type, related_to_id, date_from, date_to, due_date, category, project_id, page = 1, limit = 50 } = req.query;
 
     // Default to ADMIN if no user, or handle safely
     const userRole = req.user?.role || 'ADMIN';
@@ -77,6 +77,10 @@ const getAll = async (req, res) => {
       query += ' AND t.related_to_id = ?';
       params.push(related_to_id);
     }
+    if (due_date) {
+      query += ' AND DATE(t.due_date) = ?';
+      params.push(due_date);
+    }
     if (date_from) {
       query += ' AND DATE(t.due_date) >= ?';
       params.push(date_from);
@@ -95,22 +99,28 @@ const getAll = async (req, res) => {
     }
 
     // Pagination
-    const offset = (page - 1) * limit;
-    query += ' ORDER BY t.due_date ASC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
+    let pageNum = parseInt(page);
+    let limitNum = parseInt(limit);
+    if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
+    if (isNaN(limitNum) || limitNum < 1) limitNum = 50;
+    const offset = (pageNum - 1) * limitNum;
 
-    const [rows] = await pool.execute(query, params);
+    query += ' ORDER BY t.due_date ASC LIMIT ? OFFSET ?';
+    params.push(limitNum, offset);
+
+    // Using pool.query instead of pool.execute for listing as it is more robust with LIMIT parameters
+    const [rows] = await pool.query(query, params);
 
     // Count for pagination metadata
-    const [countResult] = await pool.execute('SELECT COUNT(*) as total FROM tasks WHERE company_id = ? AND is_deleted = 0', [companyId]);
+    const [countResult] = await pool.query('SELECT COUNT(*) as total FROM tasks WHERE company_id = ? AND is_deleted = 0', [companyId]);
 
     res.json({
       success: true,
       data: rows,
       pagination: {
         total: countResult[0]?.total || 0,
-        page: parseInt(page),
-        limit: parseInt(limit)
+        page: pageNum,
+        limit: limitNum
       }
     });
   } catch (err) {
@@ -118,6 +128,7 @@ const getAll = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 const create = async (req, res) => {
   try {
